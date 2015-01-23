@@ -50,13 +50,21 @@ wire [7:0] fos;
 alu falu (.aop(faop), .x(fx), .y(fy), .s(8'd0), .o(fo), .os(fos));
 
 reg as; // jump addsub direction
-reg [7:0] pcin; // pointer counter in 
-reg [7:0] val; // jump value in
+//reg [7:0] pcin; // pointer counter in 
+wire [7:0] val; // jump value in
 wire [7:0] pcos; // addsub output
 wire [7:0] pcinc;
+assign val = im;
 
-pcaddsub pcas (.pc(pcin), .val(val), .as(as), .out(pcos));
+pcaddsub pcas (.pc(pc), .val(val), .as(as), .out(pcos));
 assign pcinc = pc + 1'b1;
+
+reg [1:0] bop; // bitwise opcode
+reg [7:0] bx; // bitwise x input
+reg [7:0] by; // bitwise y input 
+wire [7:0] boo; // bitwise output
+
+bitlu blu (.bop(bop), .x(bx), .y(by), .o(boo)); 
 
 reg [2:0] state; // internal state machine reg
 reg [7:0] fbuf; // op+fil fetch bram buffer
@@ -66,6 +74,8 @@ reg [4:0] op; // opcode reg
 reg [2:0] fil; // file reg
 reg [7:0] im; // immediate value reg
 reg [7:0] filb; // register to store accessed register file for reads
+reg [7:0] filo; // register to access register file 0 for fast access
+reg eqs;
 
 reg [7:0] dcop;
 reg [7:0] rbuf2;
@@ -100,7 +110,7 @@ parameter [4:0] LDAB = 5'b01001; // load b into a (0x48)
 parameter [4:0] LDDB = 5'b01011; // load value at pointer b into d (0x58)
 parameter [4:0] LDAD = 5'b01100; // load d into a (0x60)
 parameter [4:0] LDBA = 5'b01101; // load a into b (0x68)
-//parameter [4:0] LDCA = 5'b01110; // load a into c (0x70)
+//parameter [4:0] CMPAXCHG = 5'b01110; // compare x to a, if equal replace a with literal (0x70)
 parameter [4:0] LDXA = 5'b01111; // load a into reg file x (0x78)
 parameter [4:0] LDBD = 5'b10000; // load d into memory at pointer b (0x80)
 parameter [4:0] ADDL = 5'b10001; // add literal to a (0x88) 
@@ -108,7 +118,8 @@ parameter [4:0] ADDX = 5'b10010; // add reg file x to a (0x90)
 parameter [4:0] SUBL = 5'b10011; // subtract literal from a (0x98)
 parameter [4:0] SUBX = 5'b10100; // subtract reg file x from a (0xA0)
 parameter [4:0] LSHFT = 5'b10101; // left shift and add literal (0xA8)
-//parameter [4:0] RSHFT = 5'b10110; // right shift a x bits and add literal (0xB0)
+parameter [4:0] BIT = 5'b10110; // perform bitwise logical operations with a, register 0 (0xB0)
+// x = 0 AND x = 1 OR x = 2 XOR x = 3 NAND
 parameter [4:0] CMPAL = 5'b10111; // compare literal to a, sets equal flag (0xB8)
 parameter [4:0] LDEAL = 5'b11000; // load literal into a if equal, resets equal flag (0xC0)
 parameter [4:0] LDEAX = 5'b11001; // load reg file x into a if equal, resets equal flag (0xC8)
@@ -126,6 +137,12 @@ parameter [4:0] ADD = 5'b00010;
 parameter [4:0] SUB = 5'b00011;
 parameter [4:0] CMP = 5'b00100;
 parameter [4:0] LSHIFT = 5'b00101;
+
+// blu opcodes
+parameter [1:0] AND = 2'b00;
+parameter [1:0] OR = 2'b01;
+parameter [1:0] XOR = 2'b10;
+parameter [1:0] NAND = 2'b11;
 
 parameter [2:0] FETCH = 3'b000;
 parameter [2:0] DECODE = 3'b001;
@@ -145,6 +162,8 @@ always @(posedge clk) begin
 			fil <= instrin[10:8]; // process incoming instructions
 			im <= instrin[7:0];
 			filb <= file[instrin[10:8]];
+			filo <= file[0];
+			eqs <= s[0];
 			rbuf <= datain;
 			pc <= pcinc; // increment program counter
 			state <= EXECUTE; // this stage for prop of decoder logic
@@ -190,17 +209,17 @@ always @(posedge clk) begin
 					s <= fos;
 				end
 				LDEAL: begin
-					if (os[0]) a <= ro;
+					if (eqs) a <= ro;
 					s[0] <= 1'b0;
 				end
 				LDEAX: begin
-					if (os[0]) a <= ro;
+					if (eqs) a <= ro;
 					s[0] <= 1'b0;
 				end
-				RJMP: pc <= pco;
+				RJMP: pc <= pcos;
 				JMPB: pc <= ro;
 				RJMPE: begin
-					if (os[0]) pc <= pcos;
+					if (eqs) pc <= pcos;
 					s[0] <= 1'b0;
 				end
 				LSHFT: a <= o;
@@ -212,6 +231,7 @@ always @(posedge clk) begin
 					upage <= fil;
 					b <= ro;
 				end
+				BIT: a <= boo;
 			endcase
 			state <= FETCH;
 		end
@@ -223,13 +243,9 @@ always @(dcop or a or b or d or file or im or pc or datain or fil or rbuf) begin
 	case (dcop)
 		RJMP: begin
 			as = fil[0];
-			pcin = pc;
-			val = im;
 		end
 		default: begin
 			as = 1'b0;
-			pcin = pc;
-			val = im;
 		end
 	endcase
 	// defaults for all alus to avoid latches
@@ -237,11 +253,14 @@ always @(dcop or a or b or d or file or im or pc or datain or fil or rbuf) begin
 	x = 8'd0;
 	y = 8'd0;
 	raop = RETY;
-	x = 8'd0;
-	y = 8'd0;
+	rx = 8'd0;
+	ry = im;
 	faop = RETY;
-	x = 8'd0;
-	y = 8'd0;
+	fx = 8'd0;
+	fy = 8'd0;
+	bop = AND;
+	bx = 8'd0;
+	by = 8'd0;
 	case (dcop)
 		// accumulator load instructions
 		LDAL: begin
@@ -389,6 +408,12 @@ always @(dcop or a or b or d or file or im or pc or datain or fil or rbuf) begin
 			raop = RETY;
 			rx = 8'd0;
 			ry = im;
+		end
+		// bitwise operators
+		BIT: begin
+			bop = fil[1:0];
+			bx = a;
+			by = filo;
 		end
 	endcase
 end

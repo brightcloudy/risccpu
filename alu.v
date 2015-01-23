@@ -38,7 +38,7 @@ assign sum = x + y;
 assign sumzero = (sum == 8'd0);
 assign diff = x - y;
 assign diffzero = (diff == 8'd0);
-assign equal = (x == y);
+assign equal = (x == y) ? 1'b1 : 1'b0;
 assign lshifted = {x[7:1], 0};
 assign lshsum = lshifted + y;
 
