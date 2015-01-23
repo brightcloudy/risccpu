@@ -1,1 +1,1 @@
-../xilinx/risc/user.txt
+00 00 AA
