@@ -1,0 +1,11 @@
+# risccpu 
+interface.v i/o interface + clocking
+control.v main CPU control logic
+alu.v ALU
+pcaddsub.v adder/subtractor for JMP calculation
+bram_tdp.v program bram (initialized to mem.txt)
+bram_user.v user bram (initialized to user.txt)
+
+interface.ucf constraints for sp601 dev board
+mem.txt program memory
+user.txt user memory
